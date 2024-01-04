@@ -49,6 +49,7 @@ export default function SignInForm({ className, ...props }: SignInFormProps) {
       console.log(result);
       const { user, tokens } = result;
       if (response.ok && user && tokens) {
+        
         saveAuth({
           userId: user.id,
           accessToken: tokens.access.token,
