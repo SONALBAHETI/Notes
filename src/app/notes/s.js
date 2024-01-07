@@ -1,35 +1,31 @@
 "use client"
 import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as zod from 'zod';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Editor } from 'react-draft-wysiwyg';
 import { EditorState, convertToRaw, convertFromRaw } from 'draft-js';
 import { stateToHTML } from 'draft-js-export-html';
 import 'react-draft-wysiwyg/dist/react-draft-wysiwyg.css';
 import { useAuth } from "@/hooks/useAuth";
 import { useApi } from "@/hooks/useApi";
-import { toast, ToastContainer } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogDescription,
-} from "@/components/ui/alert-dialog";
 
-// Zod schema for note validation
-const noteSchema = zod.object({
-  title: zod.string().min(1, 'Title is required'),
-  content: zod.string().min(1, 'Content is required')
-});
+type Note = {
+  _id: string | null;
+  title: string;
+  rawContent: string | null;
+};
 
-const EditorComponent = typeof window === 'object' ? require('react-draft-wysiwyg').Editor : () => null;
+const Editor = typeof window === 'object' ? require('react-draft-wysiwyg').Editor : () => null;
 
-const convertContentToHTML = (rawContent) => {
+const safeParseJSON = (jsonString: string) => {
+  try {
+      return JSON.parse(jsonString);
+  } catch (e) {
+      console.error('Error parsing JSON:', e);
+      return null;
+  }
+};
+
+const convertContentToHTML = (rawContent: string) => {
   try {
     const rawObject = JSON.parse(rawContent);
     const contentState = convertFromRaw(rawObject);
@@ -40,41 +36,39 @@ const convertContentToHTML = (rawContent) => {
   }
 };
 
-const NotePage: React.FC = () => {
+const NotePage: React.FC = ()  => {
   const { auth } = useAuth();
   const [notes, setNotes] = useState([]);
   const [showPopup, setShowPopup] = useState(false);
   const [currentNote, setCurrentNote] = useState({ _id: null, title: '', rawContent: null });
   const [editorState, setEditorState] = useState(EditorState.createEmpty());
-  const [isAlertDialogOpen, setIsAlertDialogOpen] = useState(false);
-
-  const { register, handleSubmit, formState: { errors } } = useForm({
-    resolver: zodResolver(noteSchema)
-  });
+  const [notification, setNotification] = useState('');
+  const [error, setError] = useState('');
 
   const [fetchNotesApi] = useApi({ url: '/api/v1/notes', method: 'GET', withAuth: true });
   const [saveNoteApi] = useApi({ url: '/api/v1/notes', method: 'POST', withAuth: true });
   const [updateNoteApi] = useApi({ url: '/api/v1/notes', method: 'PATCH', withAuth: true });
-
+ 
   useEffect(() => {
     if (auth?.accessToken) {
       fetchNotes();
     }
   }, [auth.accessToken]);
-
+  
   const fetchNotes = async () => {
     if (auth?.accessToken) {
-      console.log("Attempting to update note with token:", auth?.accessToken);
+      console.log("Attempting to update note with token:", auth?.accessToken); 
       try {
         const { response, result } = await fetchNotesApi();
         if (response.ok) {
           setNotes(result);
+          console.log('Notes fetched successfully:', result);
         } else {
           throw new Error('Failed to fetch notes');
         }
       } catch (error) {
         console.error('Error fetching notes:', error);
-        toast.error('Failed to fetch notes');
+        setError('Failed to fetch notes');
       }
     } else {
       console.log("Access token is not available. Waiting for token...");
@@ -82,50 +76,54 @@ const NotePage: React.FC = () => {
   };
 
   const handleNoteClick = (note) => {
+    console.log('Note clicked:', note); // Debug to see if the note object has the title property
     setCurrentNote({
       _id: note._id,
       title: note.title,
-      rawContent: note.content
+      rawContent: note.content // Assuming 'content' is the correct property name
     });
-    const contentState = convertContentToHTML(note.content) ? convertFromRaw(JSON.parse(note.content)) : EditorState.createEmpty();
+    const contentState = safeParseJSON(note.content) ? convertFromRaw(safeParseJSON(note.content)) : EditorState.createEmpty();
     setEditorState(EditorState.createWithContent(contentState));
     setShowPopup(true);
   };
+  
 
   const updateNote = async (noteId, noteData) => {
     const url = `http://localhost:8000/api/v1/notes/${noteId}`;
-    try {
-      const response = await fetch(url, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${auth?.accessToken}`,
-        },
-        body: JSON.stringify(noteData)
-      });
 
-      if (response.ok) {
-        fetchNotes();
-        setShowPopup(false);
-        toast.success('Note updated successfully!');
-        setCurrentNote({ _id: null, title: '', rawContent: null });
-        setEditorState(EditorState.createEmpty());
-      } else {
-        const errMsg = await response.text();
-        console.error('Failed to update note:', response.status, errMsg);
-        toast.error(`Failed to update the note: ${errMsg}`);
-      }
+    console.log("Attempting to update note with token:", auth?.accessToken);
+    try {
+        const response = await fetch(url, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${auth?.accessToken}`,
+            },
+            body: JSON.stringify(noteData)
+        });
+
+        if (response.ok) {
+            fetchNotes();
+            setShowPopup(false);
+            setNotification('Note updated successfully!');
+            setCurrentNote({ _id: null, title: '', rawContent: null });
+            setEditorState(EditorState.createEmpty());
+        } else {
+            const errMsg = await response.text();
+            console.error('Failed to update note:', response.status, errMsg);
+            setError(`Failed to update the note: ${errMsg}`);
+        }
     } catch (error) {
-      console.error('Error updating note:', error);
-      toast.error('An error occurred while updating the note');
+        console.error('Error updating note:', error);
+        setError('An error occurred while updating the note');
     }
-  };
+};
 
   const handleSaveNote = async () => {
     console.log("Access token used in POST request:", auth?.accessToken);
 
     if (!currentNote.title.trim()) {
-      toast.error('Title cannot be empty');
+      setError('Title cannot be empty');
       return;
     }
 
@@ -142,47 +140,46 @@ const NotePage: React.FC = () => {
         if (response.ok) {
           fetchNotes();
           setShowPopup(false);
-          toast.success('Note created successfully!');
+          setNotification('Note created successfully!');
           setCurrentNote({ _id: null, title: '', rawContent: null });
           setEditorState(EditorState.createEmpty());
         } else {
-          toast.error('Failed to save the note');
+          setError('Failed to save the note');
         }
       } catch (error) {
         console.error('Error saving note:', error);
-        toast.error('An error occurred while saving the note');
+        setError('An error occurred while saving the note');
       }
     }
   };
 
   const handleDeleteNote = async () => {
     if (!currentNote._id) {
-      toast.error('Cannot delete an unsaved note');
+      setError('Cannot delete an unsaved note');
       return;
     }
-    setIsAlertDialogOpen(true);
-  };
 
-  const confirmDeleteNote = async () => {
-    try {
-      const response = await fetch(`http://localhost:8000/api/v1/notes/${currentNote._id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${auth?.accessToken}`,
+    const confirmDelete = window.confirm('Are you sure you want to delete this note?');
+    if (confirmDelete) {
+      try {
+        const response = await fetch(`http://localhost:8000/api/v1/notes/${currentNote._id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${auth?.accessToken}`,
+          }
+        });
+
+        if (response.ok) {
+          fetchNotes();
+          setShowPopup(false);
+          setNotification('Note deleted successfully!');
+        } else {
+          setError('Failed to delete the note');
         }
-      });
-
-      if (response.ok) {
-        fetchNotes();
-        setShowPopup(false);
-        toast.success('Note deleted successfully!');
-        setIsAlertDialogOpen(false);
-      } else {
-        toast.error('Failed to delete the note');
+      } catch (error) {
+        console.error('Error deleting note:', error);
+        setError('An error occurred while deleting the note');
       }
-    } catch (error) {
-      console.error('Error deleting note:', error);
-      toast.error('An error occurred while deleting the note');
     }
   };
 
@@ -193,10 +190,11 @@ const NotePage: React.FC = () => {
       setEditorState(EditorState.createEmpty());
     }
   };
+
   return (
     <div className="bg-gray-100 min-h-screen">
       <div className="container mx-auto p-4">
-        <Button onClick={() => togglePopup()}>
+        <Button onClick={() => togglePopup()} className="my-4">
           Create new note &#43;
         </Button>
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
@@ -208,14 +206,12 @@ const NotePage: React.FC = () => {
           ))}
         </div>
       </div>
-
-      {/* Edit Note Popup */}
       {showPopup && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full" id="my-modal" style={{ zIndex: 1000 }}>
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full" id="my-modal">
           <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 xl:w-2/5 shadow-lg rounded-md bg-white">
             <div className="mt-3 text-left px-7 py-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg leading-6 font-medium text-gray-900">{currentNote._id ? 'Edit Note' : 'Add a Note'}</h3>
+                <h3 className="text-lg leading-6 font-medium text-gray-900">Add a note</h3>
                 <button onClick={() => togglePopup()} className="text-gray-400 hover:text-gray-500">
                   <span className="sr-only">Close</span>
                   &#10005;
@@ -227,8 +223,8 @@ const NotePage: React.FC = () => {
                 <Input 
                   id="title" 
                   placeholder="Enter your title here" 
-                  value={currentNote.title || ''} 
-                  onChange={(e) => setCurrentNote({ ...currentNote, title: e.target.value })} 
+                  value={currentNote.title || ''} // Set value from currentNote state
+                  onChange={(e) => setCurrentNote({ ...currentNote, title: e.target.value })} // Update state when title changes
                 />
               </div>
               <div className="mb-3">
@@ -241,44 +237,25 @@ const NotePage: React.FC = () => {
                 />
               </div>
               <div className="flex items-center justify-end mt-4 space-x-3">
-                {currentNote._id && (
-                  <Button onClick={() => handleDeleteNote()}>
-                    Delete
-                  </Button>
-                )}
-                <Button onClick={() => handleSaveNote()}>
-                  {currentNote._id ? 'Update' : 'Save'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-{isAlertDialogOpen && (
-  <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full" id="delete-modal" style={{ zIndex: 2000 }}>
-    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-4">
-      <div className="flex justify-end">
-        <button className="text-gray-400 hover:text-gray-500" onClick={() => setIsAlertDialogOpen(false)}>
-          &#10005;
-        </button>
-      </div>
-      <AlertDialog isOpen={isAlertDialogOpen}>
-        <AlertDialogHeader>Delete Note</AlertDialogHeader>
-        <AlertDialogDescription>
-          Are you sure you want to delete this note? This action cannot be undone.
-        </AlertDialogDescription>
-        <AlertDialogFooter className="flex justify-start"> 
-          <Button onClick={() => confirmDeleteNote()} className="bg-red-500 text-white">
-            Delete
+          {currentNote._id && (
+            <Button onClick={() => handleDeleteNote()} className="your-manager-button-class">
+              Delete
+            </Button>
+          )}
+          <Button onClick={() => handleSaveNote()} className="your-manager-button-class">
+            {currentNote._id ? 'Update' : 'Save'}
           </Button>
-        </AlertDialogFooter>
-      </AlertDialog>
+        </div>
+      </div>
     </div>
   </div>
 )}
-
+      {error && <div className="text-red-500">{error}</div>}
+      {notification && <div className="text-green-500">{notification}</div>}
     </div>
   );
+  
+  
 };
-
 export default NotePage;
+
